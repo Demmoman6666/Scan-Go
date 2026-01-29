@@ -1,291 +1,284 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "scan_go_basket_v1";
 
-// This is your known working barcode for testing quickly
-const TEST_BARCODE = "805610625973";
+function money(n) {
+  const num = Number(n || 0);
+  return num.toFixed(2);
+}
 
 export default function ScanPage() {
-  const inputRef = useRef(null);
-
-  // Basket state lives ONLY on the device (browser) for MVP
-  const [basket, setBasket] = useState({ items: [] });
-
-  // UI state
   const [barcode, setBarcode] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState([]); // [{ barcode, title, price, qty }]
+  const [loadingAdd, setLoadingAdd] = useState(false);
+  const [loadingCheckout, setLoadingCheckout] = useState(false);
   const [error, setError] = useState("");
+  const [checkoutResult, setCheckoutResult] = useState(null); // { orderId, orderName, adminUrl }
 
-  // 1) Load basket from localStorage (device storage) on first load
+  // Load basket from localStorage on first load
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setBasket(JSON.parse(saved));
-    } catch {
-      // ignore
-    }
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setItems(JSON.parse(raw));
+    } catch {}
   }, []);
 
-  // 2) Save basket to localStorage whenever it changes
+  // Persist basket to localStorage whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(basket));
-    } catch {
-      // ignore
-    }
-  }, [basket]);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    } catch {}
+  }, [items]);
 
-  // Auto-focus input on load
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  // Compute totals (not stored, just calculated)
   const total = useMemo(() => {
-    return basket.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  }, [basket.items]);
+    return items.reduce((sum, it) => sum + Number(it.price || 0) * Number(it.qty || 0), 0);
+  }, [items]);
 
-  function addProductToBasket(product) {
-    setBasket((prev) => {
-      const items = [...prev.items];
-      const idx = items.findIndex((x) => x.barcode === product.barcode);
+  async function addByBarcode(bc) {
+    setError("");
+    setCheckoutResult(null);
 
-      if (idx >= 0) {
-        items[idx] = { ...items[idx], quantity: items[idx].quantity + 1 };
-      } else {
-        items.push({
-          barcode: product.barcode,
-          title: product.title,
-          price: Number(product.price),
-          quantity: 1,
-          stock: product.stock ?? null,
-          inStock: product.inStock ?? true,
-          variantId: product.variantId ?? null,
-          variantTitle: product.variantTitle ?? null,
-        });
+    const code = (bc || "").trim();
+    if (!code) return;
+
+    setLoadingAdd(true);
+    try {
+      const res = await fetch(`/api/products/by-barcode?barcode=${encodeURIComponent(code)}`, {
+        method: "GET",
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data?.found) {
+        setError(data?.message || "Not found");
+        return;
       }
 
-      return { ...prev, items };
-    });
+      const product = data.product;
+
+      // If already in basket, increment qty
+      setItems((prev) => {
+        const idx = prev.findIndex((x) => x.barcode === product.barcode);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = { ...copy[idx], qty: copy[idx].qty + 1 };
+          return copy;
+        }
+        return [
+          ...prev,
+          {
+            barcode: product.barcode,
+            title: product.title,
+            price: Number(product.price || 0),
+            qty: 1,
+          },
+        ];
+      });
+
+      setBarcode("");
+    } catch (e) {
+      setError(e?.message || "Failed to add item");
+    } finally {
+      setLoadingAdd(false);
+    }
   }
 
   function inc(barcode) {
-    setBasket((prev) => ({
-      ...prev,
-      items: prev.items.map((i) =>
-        i.barcode === barcode ? { ...i, quantity: i.quantity + 1 } : i
-      ),
-    }));
+    setItems((prev) =>
+      prev.map((x) => (x.barcode === barcode ? { ...x, qty: x.qty + 1 } : x))
+    );
   }
 
   function dec(barcode) {
-    setBasket((prev) => ({
-      ...prev,
-      items: prev.items
-        .map((i) =>
-          i.barcode === barcode ? { ...i, quantity: i.quantity - 1 } : i
-        )
-        .filter((i) => i.quantity > 0),
-    }));
+    setItems((prev) =>
+      prev
+        .map((x) => (x.barcode === barcode ? { ...x, qty: x.qty - 1 } : x))
+        .filter((x) => x.qty > 0)
+    );
   }
 
-  function removeItem(barcode) {
-    setBasket((prev) => ({
-      ...prev,
-      items: prev.items.filter((i) => i.barcode !== barcode),
-    }));
+  function remove(barcode) {
+    setItems((prev) => prev.filter((x) => x.barcode !== barcode));
   }
 
   function clearBasket() {
-    setBasket({ items: [] });
+    setItems([]);
+    setCheckoutResult(null);
+    setError("");
     try {
       localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // ignore
-    }
-    setError("");
-    setBarcode("");
-    inputRef.current?.focus();
+    } catch {}
   }
 
-  async function lookupAndAdd(inputBarcode) {
-    const b = (inputBarcode || "").trim();
-    if (!b) return;
-
-    setLoading(true);
+  async function checkout() {
     setError("");
+    setCheckoutResult(null);
 
+    if (!items.length) {
+      setError("Basket is empty");
+      return;
+    }
+
+    setLoadingCheckout(true);
     try {
-      // Calls YOUR backend endpoint you already built
-      const res = await fetch(`/api/products/by-barcode?barcode=${encodeURIComponent(b)}`);
-      const data = await res.json();
+      const res = await fetch("/api/orders/create-unpaid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "scan-and-go",
+          deviceId: "BROWSER-TEST-01",
+          items: items.map((x) => ({
+            barcode: x.barcode,
+            quantity: x.qty,
+          })),
+        }),
+      });
 
-      if (!res.ok) {
-        throw new Error(data?.error || "Lookup failed");
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        setError(data?.error || data?.message || "Checkout failed");
+        return;
       }
 
-      if (!data.found) {
-        setError(`Not found: ${b}`);
-      } else {
-        addProductToBasket(data.product);
-        setBarcode("");
-        // keep it fast to scan again
-        inputRef.current?.focus();
-      }
+      // Expecting: { ok:true, orderId, orderName, adminUrl? }
+      setCheckoutResult({
+        orderId: data.orderId,
+        orderName: data.orderName,
+        adminUrl: data.adminUrl,
+      });
+
+      // MVP behaviour: clear basket after successful checkout
+      clearBasket();
     } catch (e) {
-      setError(e?.message || "Network error");
+      setError(e?.message || "Checkout failed");
     } finally {
-      setLoading(false);
+      setLoadingCheckout(false);
     }
-  }
-
-  function onSubmit(e) {
-    e.preventDefault();
-    lookupAndAdd(barcode);
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: 20, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
-      <h1 style={{ margin: "0 0 6px 0" }}>Salon Brands Pro — Scan &amp; Go (Device Basket)</h1>
-      <p style={{ margin: "0 0 16px 0", opacity: 0.75 }}>
-        Scan/enter a barcode → it adds to the basket stored on this device (localStorage).
+    <div style={{ maxWidth: 720, margin: "24px auto", padding: 16, fontFamily: "system-ui" }}>
+      <h1 style={{ margin: 0 }}>Salon Brands Pro — Scan & Go (Device Basket)</h1>
+      <p style={{ marginTop: 8, color: "#555" }}>
+        Scan/enter a barcode → adds to basket stored on this device (localStorage).
       </p>
 
-      <form onSubmit={onSubmit} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <input
-          ref={inputRef}
           value={barcode}
           onChange={(e) => setBarcode(e.target.value)}
-          placeholder="Enter barcode…"
-          inputMode="numeric"
-          style={{
-            flex: 1,
-            padding: "12px 12px",
-            borderRadius: 10,
-            border: "1px solid #ccc",
-            fontSize: 16,
+          placeholder="Enter barcode..."
+          style={{ flex: 1, padding: 10, fontSize: 16 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") addByBarcode(barcode);
           }}
         />
         <button
-          type="submit"
-          disabled={loading || !barcode.trim()}
-          style={{
-            padding: "12px 14px",
-            borderRadius: 10,
-            border: "1px solid #111",
-            background: loading ? "#777" : "#111",
-            color: "#fff",
-            fontWeight: 700,
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
+          onClick={() => addByBarcode(barcode)}
+          disabled={loadingAdd}
+          style={{ padding: "10px 14px", fontSize: 16 }}
         >
-          {loading ? "Adding…" : "Add"}
+          {loadingAdd ? "Adding..." : "Add"}
         </button>
-      </form>
+      </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <button
-          type="button"
-          onClick={() => lookupAndAdd(TEST_BARCODE)}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid #ccc",
-            background: "#fff",
-            cursor: "pointer",
-          }}
-        >
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button onClick={() => addByBarcode("8005610625973")} style={{ padding: "8px 10px" }}>
           Test add known barcode
         </button>
+        <button onClick={clearBasket} style={{ padding: "8px 10px" }}>
+          Clear basket
+        </button>
 
+        <div style={{ flex: 1 }} />
+
+        {/* ✅ CHECKOUT BUTTON */}
         <button
-          type="button"
-          onClick={clearBasket}
+          onClick={checkout}
+          disabled={loadingCheckout || items.length === 0}
           style={{
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid #ccc",
-            background: "#fff",
-            cursor: "pointer",
+            padding: "10px 14px",
+            fontSize: 16,
+            fontWeight: 700,
           }}
         >
-          Clear basket
+          {loadingCheckout ? "Checking out..." : `Checkout £${money(total)}`}
         </button>
       </div>
 
       {error ? (
-        <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, background: "#ffe8e8", border: "1px solid #ffb3b3" }}>
-          <strong style={{ display: "block", marginBottom: 4 }}>Error</strong>
-          <div>{error}</div>
+        <div style={{ marginTop: 12, padding: 10, background: "#ffe9e9", border: "1px solid #ffb3b3" }}>
+          <strong>Error:</strong> {error}
         </div>
       ) : null}
 
-      <h2 style={{ margin: "0 0 10px 0" }}>Basket</h2>
-
-      {basket.items.length === 0 ? (
-        <div style={{ padding: 14, borderRadius: 10, border: "1px solid #ddd", background: "#fafafa" }}>
-          No items yet. Scan something.
-        </div>
-      ) : (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, overflow: "hidden" }}>
-          {basket.items.map((i) => (
-            <div key={i.barcode} style={{ display: "flex", gap: 12, padding: 12, borderTop: "1px solid #eee", alignItems: "center" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700 }}>{i.title}</div>
-                <div style={{ fontSize: 13, opacity: 0.7 }}>
-                  Barcode: {i.barcode}
-                  {i.variantTitle ? ` • Variant: ${i.variantTitle}` : ""}
-                  {typeof i.stock === "number" ? ` • Stock: ${i.stock}` : ""}
-                </div>
-                <div style={{ marginTop: 4 }}>
-                  £{i.price.toFixed(2)} each • Line: £{(i.price * i.quantity).toFixed(2)}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <button type="button" onClick={() => dec(i.barcode)} style={btnSmall}>−</button>
-                <div style={{ minWidth: 28, textAlign: "center", fontWeight: 700 }}>{i.quantity}</div>
-                <button type="button" onClick={() => inc(i.barcode)} style={btnSmall}>+</button>
-              </div>
-
-              <button type="button" onClick={() => removeItem(i.barcode)} style={btnDanger}>
-                Remove
-              </button>
+      {checkoutResult ? (
+        <div style={{ marginTop: 12, padding: 10, background: "#e9fff0", border: "1px solid #9ee6b3" }}>
+          <strong>Order created!</strong>
+          <div style={{ marginTop: 6 }}>
+            Order: <b>{checkoutResult.orderName || "(no order name returned yet)"}</b>
+          </div>
+          {checkoutResult.adminUrl ? (
+            <div style={{ marginTop: 6 }}>
+              <a href={checkoutResult.adminUrl} target="_blank" rel="noreferrer">
+                Open in Shopify Admin
+              </a>
             </div>
-          ))}
+          ) : null}
+        </div>
+      ) : null}
 
-          <div style={{ padding: 12, borderTop: "1px solid #eee", display: "flex", justifyContent: "space-between", fontWeight: 800 }}>
-            <div>Total</div>
-            <div>£{total.toFixed(2)}</div>
+      <h2 style={{ marginTop: 18 }}>Basket</h2>
+
+      {!items.length ? <p style={{ color: "#666" }}>Basket empty.</p> : null}
+
+      {items.map((it) => (
+        <div
+          key={it.barcode}
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 10,
+            padding: 12,
+            marginBottom: 10,
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>{it.title}</div>
+          <div style={{ fontSize: 13, color: "#666" }}>Barcode: {it.barcode}</div>
+          <div style={{ marginTop: 6 }}>
+            £{money(it.price)} each • Line: <b>£{money(it.price * it.qty)}</b>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
+            <button onClick={() => dec(it.barcode)} style={{ padding: "6px 10px" }}>
+              −
+            </button>
+            <div style={{ minWidth: 30, textAlign: "center", fontWeight: 700 }}>{it.qty}</div>
+            <button onClick={() => inc(it.barcode)} style={{ padding: "6px 10px" }}>
+              +
+            </button>
+
+            <div style={{ flex: 1 }} />
+
+            <button
+              onClick={() => remove(it.barcode)}
+              style={{ padding: "6px 10px", background: "#ffe9e9", border: "1px solid #ffb3b3" }}
+            >
+              Remove
+            </button>
           </div>
         </div>
-      )}
+      ))}
 
-      <div style={{ marginTop: 16, fontSize: 13, opacity: 0.7 }}>
-        Tip: this basket is stored on this device only. Refreshing the page keeps it.
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 800, marginTop: 10 }}>
+        <span>Total</span>
+        <span>£{money(total)}</span>
       </div>
+
+      <p style={{ marginTop: 10, fontSize: 12, color: "#777" }}>
+        Tip: this basket is stored on this device only. Refreshing the page keeps it.
+      </p>
     </div>
   );
 }
-
-const btnSmall = {
-  width: 34,
-  height: 34,
-  borderRadius: 10,
-  border: "1px solid #ccc",
-  background: "#fff",
-  cursor: "pointer",
-  fontSize: 18,
-  lineHeight: "18px",
-};
-
-const btnDanger = {
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "1px solid #ffb3b3",
-  background: "#ffe8e8",
-  cursor: "pointer",
-  fontWeight: 700,
-};
