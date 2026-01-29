@@ -1,6 +1,7 @@
 import crypto from "crypto";
 
 export const runtime = "nodejs"; // IMPORTANT: required for Node crypto
+export const dynamic = "force-dynamic"; // prevents any static/prerender weirdness
 
 function verifyHmac(query, secret) {
   const provided = query.get("hmac") || "";
