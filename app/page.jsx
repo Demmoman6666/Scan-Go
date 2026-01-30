@@ -7,6 +7,13 @@ const BRAND_PINK = "#FEB3E4";
 export default function HomePage() {
   const router = useRouter();
 
+  function startShopping() {
+    try {
+      sessionStorage.setItem("scan_go_started", "1");
+    } catch {}
+    router.push("/scan");
+  }
+
   return (
     <div
       style={{
@@ -44,7 +51,7 @@ export default function HomePage() {
         </div>
 
         <button
-          onClick={() => router.push("/scan")}
+          onClick={startShopping}
           style={{
             marginTop: 18,
             width: "100%",
