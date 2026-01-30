@@ -19,7 +19,8 @@ export default function ScanPage() {
   const [error, setError] = useState("");
   const [checkoutResult, setCheckoutResult] = useState(null); // { orderId, orderName, adminUrl }
 
-  const barcodeInputRef = useRef(null);
+  // used only as a visual indicator / last scan state (no input field)
+  const lastScanAtRef = useRef(0);
 
   // Load basket from localStorage on first load
   useEffect(() => {
@@ -35,10 +36,6 @@ export default function ScanPage() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     } catch {}
   }, [items]);
-
-  // ✅ IMPORTANT: Do NOT auto-focus on Zebra/Android or it pops the keyboard.
-  // Keeping this effect removed is the fix.
-  // (We rely on global scanner capture below instead.)
 
   const subtotal = useMemo(() => {
     return items.reduce(
@@ -97,8 +94,8 @@ export default function ScanPage() {
         ];
       });
 
-      setBarcode("");
-      // ✅ don't focus input (avoids keyboard)
+      setBarcode(code);
+      lastScanAtRef.current = Date.now();
     } catch (e) {
       setError((e && e.message) || "Failed to add item");
     } finally {
@@ -108,12 +105,8 @@ export default function ScanPage() {
 
   /**
    * ✅ GLOBAL SCANNER CAPTURE
-   * Works even if input isn't focused.
-   *
-   * Important rules:
-   * - Ignore when user is actively typing inside an input/textarea/contenteditable
-   * - Use a short buffer timeout
-   * - Only trigger add when scanner "ends" with Enter
+   * No input field required.
+   * Scanner types quickly + presses Enter => we capture it.
    */
   useEffect(() => {
     let buffer = "";
@@ -132,7 +125,7 @@ export default function ScanPage() {
       // Let shortcuts work
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      // If user is typing in a field, don't hijack keys
+      // If user is typing in a field (e.g. Shopify admin in same webview), don't hijack keys
       if (isTypingTarget(e.target)) return;
 
       // Reset timer for scanner bursts
@@ -155,7 +148,6 @@ export default function ScanPage() {
         buffer = "";
         if (!code) return;
 
-        setBarcode(code);
         addByBarcode(code);
       }
     };
@@ -232,7 +224,6 @@ export default function ScanPage() {
         adminUrl: data.adminUrl,
       });
 
-      // MVP behaviour: clear basket after successful checkout
       clearBasketInternal();
     } catch (e) {
       setError((e && e.message) || "Checkout failed");
@@ -240,6 +231,9 @@ export default function ScanPage() {
       setLoadingCheckout(false);
     }
   }
+
+  const justScanned =
+    barcode && Date.now() - (lastScanAtRef.current || 0) < 2500;
 
   return (
     <div
@@ -251,7 +245,7 @@ export default function ScanPage() {
         fontFamily: "'League Spartan', system-ui, -apple-system",
         width: "100%",
         boxSizing: "border-box",
-        overflowX: "hidden", // ✅ prevents slight right-scroll
+        overflowX: "hidden",
       }}
     >
       {/* Logo header */}
@@ -261,72 +255,46 @@ export default function ScanPage() {
           alt="Salon Brands Pro"
           style={{ height: 44, width: "auto", maxWidth: "100%" }}
           onError={(e) => {
-            // If logo missing, fail gracefully
             e.currentTarget.style.display = "none";
           }}
         />
       </div>
 
-      <p style={{ marginTop: 10, color: "#555", textAlign: "center" }}>
-        Scan a barcode (or type it) to add items to the basket.
-      </p>
-
-      {/* Scan bar */}
+      {/* Minimal status bar (optional but helpful) */}
       <div
         style={{
-          display: "flex",
-          gap: 10,
           marginTop: 12,
-          background: "#fafafa",
+          background: "#fff",
           border: "1px solid #eee",
           borderRadius: 14,
           padding: 12,
-          width: "100%",
-          boxSizing: "border-box",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
         }}
       >
-        <input
-          ref={barcodeInputRef}
-          id="barcodeInput"
-          value={barcode}
-          readOnly
-          inputMode="none"
-          tabIndex={-1}
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          placeholder="Ready to scan…"
+        <div>
+          <div style={{ fontWeight: 900 }}>
+            {loadingAdd ? "Adding item…" : "Scan items to add to basket"}
+          </div>
+          <div style={{ fontSize: 13, color: "#777" }}>
+            {barcode ? `Last scanned: ${barcode}` : "No scans yet"}
+          </div>
+        </div>
+
+        <div
           style={{
-            flex: 1,
-            minWidth: 0, // ✅ prevents overflow in flex rows
-            padding: 14,
-            fontSize: 18,
+            padding: "8px 10px",
             borderRadius: 12,
             border: "1px solid #ddd",
-            outline: "none",
-            background: "#f9f9f9",
-          }}
-          onFocus={(e) => {
-            // ✅ stops Android keyboard popping up on Zebra
-            e.currentTarget.blur();
-          }}
-        />
-        <button
-          onClick={() => addByBarcode(barcode)}
-          disabled={loadingAdd}
-          style={{
-            padding: "14px 16px",
-            fontSize: 18,
-            fontWeight: 800,
-            borderRadius: 12,
-            border: "1px solid #111",
-            background: BRAND_PINK,
-            cursor: loadingAdd ? "not-allowed" : "pointer",
+            background: justScanned ? BRAND_PINK : "#fafafa",
+            fontWeight: 900,
             whiteSpace: "nowrap",
           }}
         >
-          {loadingAdd ? "Adding…" : "Add"}
-        </button>
+          {items.length} item{items.length === 1 ? "" : "s"}
+        </div>
       </div>
 
       {error ? (
