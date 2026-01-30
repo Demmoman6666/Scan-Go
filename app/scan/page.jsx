@@ -1,21 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const STORAGE_KEY = "scan_go_basket_v1";
 
-function money(n) {
+function money(n: number) {
   const num = Number(n || 0);
   return num.toFixed(2);
 }
 
+const VAT_RATE = 0.2;
+
 export default function ScanPage() {
   const [barcode, setBarcode] = useState("");
-  const [items, setItems] = useState([]); // [{ barcode, title, price, qty }]
+  const [items, setItems] = useState<any[]>([]); // [{ barcode, title, price, qty }]
   const [loadingAdd, setLoadingAdd] = useState(false);
   const [loadingCheckout, setLoadingCheckout] = useState(false);
   const [error, setError] = useState("");
-  const [checkoutResult, setCheckoutResult] = useState(null); // { orderId, orderName, adminUrl }
+  const [checkoutResult, setCheckoutResult] = useState<any>(null); // { orderId, orderName, adminUrl }
+
+  const barcodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load basket from localStorage on first load
   useEffect(() => {
@@ -32,11 +36,23 @@ export default function ScanPage() {
     } catch {}
   }, [items]);
 
-  const total = useMemo(() => {
-    return items.reduce((sum, it) => sum + Number(it.price || 0) * Number(it.qty || 0), 0);
+  // Totals
+  const subtotal = useMemo(() => {
+    return items.reduce(
+      (sum, it) => sum + Number(it.price || 0) * Number(it.qty || 0),
+      0
+    );
   }, [items]);
 
-  async function addByBarcode(bc) {
+  const vat = useMemo(() => {
+    return Math.round(subtotal * VAT_RATE * 100) / 100;
+  }, [subtotal]);
+
+  const totalIncVat = useMemo(() => {
+    return Math.round((subtotal + vat) * 100) / 100;
+  }, [subtotal, vat]);
+
+  async function addByBarcode(bc: string) {
     setError("");
     setCheckoutResult(null);
 
@@ -45,9 +61,10 @@ export default function ScanPage() {
 
     setLoadingAdd(true);
     try {
-      const res = await fetch(`/api/products/by-barcode?barcode=${encodeURIComponent(code)}`, {
-        method: "GET",
-      });
+      const res = await fetch(
+        `/api/products/by-barcode?barcode=${encodeURIComponent(code)}`,
+        { method: "GET" }
+      );
       const data = await res.json();
 
       if (!res.ok || !data?.found) {
@@ -77,20 +94,64 @@ export default function ScanPage() {
       });
 
       setBarcode("");
-    } catch (e) {
+      // keep focus ready for manual typing too
+      barcodeInputRef.current?.focus();
+    } catch (e: any) {
       setError(e?.message || "Failed to add item");
     } finally {
       setLoadingAdd(false);
     }
   }
 
-  function inc(barcode) {
+  // ✅ GLOBAL SCANNER CAPTURE (works even if input isn't focused)
+  // Zebra TC scanners typically "type" the barcode quickly + send Enter.
+  useEffect(() => {
+    let buffer = "";
+    let timer: any = null;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Reset buffer if user pauses
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        buffer = "";
+      }, 80);
+
+      // Collect printable characters
+      if (e.key.length === 1) {
+        buffer += e.key;
+        return;
+      }
+
+      // Terminator (most Zebra configs use Enter)
+      if (e.key === "Enter") {
+        e.preventDefault();
+
+        const code = buffer.trim();
+        buffer = "";
+
+        if (!code) return;
+
+        // Show the scanned value in the input (nice for staff)
+        setBarcode(code);
+
+        // Add immediately
+        addByBarcode(code);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  function inc(barcode: string) {
     setItems((prev) =>
       prev.map((x) => (x.barcode === barcode ? { ...x, qty: x.qty + 1 } : x))
     );
   }
 
-  function dec(barcode) {
+  function dec(barcode: string) {
     setItems((prev) =>
       prev
         .map((x) => (x.barcode === barcode ? { ...x, qty: x.qty - 1 } : x))
@@ -98,10 +159,11 @@ export default function ScanPage() {
     );
   }
 
-  function remove(barcode) {
+  function remove(barcode: string) {
     setItems((prev) => prev.filter((x) => x.barcode !== barcode));
   }
 
+  // Kept for internal use (we just remove the button from UI)
   function clearBasket() {
     setItems([]);
     setCheckoutResult(null);
@@ -151,7 +213,7 @@ export default function ScanPage() {
 
       // MVP behaviour: clear basket after successful checkout
       clearBasket();
-    } catch (e) {
+    } catch (e: any) {
       setError(e?.message || "Checkout failed");
     } finally {
       setLoadingCheckout(false);
@@ -159,18 +221,34 @@ export default function ScanPage() {
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: "24px auto", padding: 16, fontFamily: "system-ui" }}>
-      <h1 style={{ margin: 0 }}>Salon Brands Pro — Scan & Go (Device Basket)</h1>
+    <div
+      style={{
+        maxWidth: 720,
+        margin: "16px auto",
+        padding: 16,
+        fontFamily: "system-ui",
+      }}
+    >
+      <h1 style={{ margin: 0 }}>Salon Brands Pro — Scan & Go</h1>
       <p style={{ marginTop: 8, color: "#555" }}>
-        Scan/enter a barcode → adds to basket stored on this device (localStorage).
+        Scan a barcode (or type it) → adds to a basket stored on this device.
       </p>
 
+      {/* Scan bar */}
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <input
+          ref={barcodeInputRef}
+          id="barcodeInput"
           value={barcode}
           onChange={(e) => setBarcode(e.target.value)}
-          placeholder="Enter barcode..."
-          style={{ flex: 1, padding: 10, fontSize: 16 }}
+          placeholder="Ready to scan…"
+          style={{
+            flex: 1,
+            padding: 12,
+            fontSize: 18,
+            borderRadius: 10,
+            border: "1px solid #ddd",
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") addByBarcode(barcode);
           }}
@@ -178,18 +256,25 @@ export default function ScanPage() {
         <button
           onClick={() => addByBarcode(barcode)}
           disabled={loadingAdd}
-          style={{ padding: "10px 14px", fontSize: 16 }}
+          style={{
+            padding: "12px 16px",
+            fontSize: 18,
+            fontWeight: 700,
+            borderRadius: 10,
+            border: "1px solid #222",
+          }}
         >
-          {loadingAdd ? "Adding..." : "Add"}
+          {loadingAdd ? "Adding…" : "Add"}
         </button>
       </div>
 
+      {/* Actions row */}
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-        <button onClick={() => addByBarcode("8005610625973")} style={{ padding: "8px 10px" }}>
+        <button
+          onClick={() => addByBarcode("8005610625973")}
+          style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" }}
+        >
           Test add known barcode
-        </button>
-        <button onClick={clearBasket} style={{ padding: "8px 10px" }}>
-          Clear basket
         </button>
 
         <div style={{ flex: 1 }} />
@@ -199,23 +284,41 @@ export default function ScanPage() {
           onClick={checkout}
           disabled={loadingCheckout || items.length === 0}
           style={{
-            padding: "10px 14px",
-            fontSize: 16,
-            fontWeight: 700,
+            padding: "12px 16px",
+            fontSize: 18,
+            fontWeight: 800,
+            borderRadius: 10,
+            border: "1px solid #111",
           }}
         >
-          {loadingCheckout ? "Checking out..." : `Checkout £${money(total)}`}
+          {loadingCheckout ? "Checking out…" : `Checkout £${money(totalIncVat)}`}
         </button>
       </div>
 
       {error ? (
-        <div style={{ marginTop: 12, padding: 10, background: "#ffe9e9", border: "1px solid #ffb3b3" }}>
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            background: "#ffe9e9",
+            border: "1px solid #ffb3b3",
+            borderRadius: 10,
+          }}
+        >
           <strong>Error:</strong> {error}
         </div>
       ) : null}
 
       {checkoutResult ? (
-        <div style={{ marginTop: 12, padding: 10, background: "#e9fff0", border: "1px solid #9ee6b3" }}>
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            background: "#e9fff0",
+            border: "1px solid #9ee6b3",
+            borderRadius: 10,
+          }}
+        >
           <strong>Order created!</strong>
           <div style={{ marginTop: 6 }}>
             Order: <b>{checkoutResult.orderName || "(no order name returned yet)"}</b>
@@ -239,23 +342,31 @@ export default function ScanPage() {
           key={it.barcode}
           style={{
             border: "1px solid #ddd",
-            borderRadius: 10,
+            borderRadius: 12,
             padding: 12,
             marginBottom: 10,
           }}
         >
-          <div style={{ fontWeight: 700 }}>{it.title}</div>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>{it.title}</div>
           <div style={{ fontSize: 13, color: "#666" }}>Barcode: {it.barcode}</div>
           <div style={{ marginTop: 6 }}>
             £{money(it.price)} each • Line: <b>£{money(it.price * it.qty)}</b>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
-            <button onClick={() => dec(it.barcode)} style={{ padding: "6px 10px" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+            <button
+              onClick={() => dec(it.barcode)}
+              style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #ddd", fontSize: 18 }}
+            >
               −
             </button>
-            <div style={{ minWidth: 30, textAlign: "center", fontWeight: 700 }}>{it.qty}</div>
-            <button onClick={() => inc(it.barcode)} style={{ padding: "6px 10px" }}>
+            <div style={{ minWidth: 34, textAlign: "center", fontWeight: 800, fontSize: 18 }}>
+              {it.qty}
+            </div>
+            <button
+              onClick={() => inc(it.barcode)}
+              style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #ddd", fontSize: 18 }}
+            >
               +
             </button>
 
@@ -263,7 +374,13 @@ export default function ScanPage() {
 
             <button
               onClick={() => remove(it.barcode)}
-              style={{ padding: "6px 10px", background: "#ffe9e9", border: "1px solid #ffb3b3" }}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                background: "#ffe9e9",
+                border: "1px solid #ffb3b3",
+                fontWeight: 700,
+              }}
             >
               Remove
             </button>
@@ -271,9 +388,29 @@ export default function ScanPage() {
         </div>
       ))}
 
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 800, marginTop: 10 }}>
-        <span>Total</span>
-        <span>£{money(total)}</span>
+      {/* ✅ Totals section (Subtotal / VAT / Total inc VAT) */}
+      <div
+        style={{
+          marginTop: 10,
+          borderTop: "1px solid #eee",
+          paddingTop: 12,
+          fontSize: 18,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+          <span style={{ color: "#444" }}>Subtotal</span>
+          <span style={{ fontWeight: 800 }}>£{money(subtotal)}</span>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+          <span style={{ color: "#444" }}>VAT (20%)</span>
+          <span style={{ fontWeight: 800 }}>£{money(vat)}</span>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 20 }}>
+          <span style={{ fontWeight: 900 }}>Total (inc VAT)</span>
+          <span style={{ fontWeight: 900 }}>£{money(totalIncVat)}</span>
+        </div>
       </div>
 
       <p style={{ marginTop: 10, fontSize: 12, color: "#777" }}>
