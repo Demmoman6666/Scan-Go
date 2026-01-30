@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 const STORAGE_KEY = "scan_go_basket_v1";
 const VAT_RATE = 0.2;
 const BRAND_PINK = "#FEB3E4";
+const START_FLAG_KEY = "scan_go_started";
 
 function money(n) {
   const num = Number(n || 0);
@@ -12,6 +14,8 @@ function money(n) {
 }
 
 export default function ScanPage() {
+  const router = useRouter();
+
   const [barcode, setBarcode] = useState("");
   const [items, setItems] = useState([]); // [{ barcode, title, price, qty }]
   const [loadingAdd, setLoadingAdd] = useState(false);
@@ -21,6 +25,39 @@ export default function ScanPage() {
 
   // used only as a visual indicator / last scan state (no input field)
   const lastScanAtRef = useRef(0);
+
+  // ✅ Guard: don't allow /scan unless "Start shopping" was pressed
+  useEffect(() => {
+    let started = false;
+    try {
+      started = sessionStorage.getItem(START_FLAG_KEY) === "1";
+    } catch {}
+
+    if (!started) {
+      router.replace("/");
+    }
+  }, [router]);
+
+  // ✅ Prevent horizontal scroll / "not full screen" issues on Zebra WebView
+  useEffect(() => {
+    try {
+      document.documentElement.style.overflowX = "hidden";
+      document.body.style.overflowX = "hidden";
+      document.body.style.margin = "0";
+      document.body.style.padding = "0";
+      document.body.style.width = "100%";
+    } catch {}
+
+    return () => {
+      try {
+        document.documentElement.style.overflowX = "";
+        document.body.style.overflowX = "";
+        document.body.style.margin = "";
+        document.body.style.padding = "";
+        document.body.style.width = "";
+      } catch {}
+    };
+  }, []);
 
   // Load basket from localStorage on first load
   useEffect(() => {
@@ -107,6 +144,9 @@ export default function ScanPage() {
    * ✅ GLOBAL SCANNER CAPTURE
    * No input field required.
    * Scanner types quickly + presses Enter => we capture it.
+   *
+   * Also: prevent the Android soft keyboard popping up by ensuring we never focus
+   * an input and by blurring any accidental focus.
    */
   useEffect(() => {
     let buffer = "";
@@ -121,11 +161,23 @@ export default function ScanPage() {
       return false;
     };
 
+    const blurIfEditableFocused = () => {
+      try {
+        const a = document.activeElement;
+        if (isTypingTarget(a)) a.blur();
+      } catch {}
+    };
+
+    // On Zebra, the WebView can sometimes focus something and pop keyboard.
+    // We gently blur on first interaction and after scans.
+    const onPointerDown = () => blurIfEditableFocused();
+    window.addEventListener("pointerdown", onPointerDown, true);
+
     const onKeyDown = (e) => {
       // Let shortcuts work
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      // If user is typing in a field (e.g. Shopify admin in same webview), don't hijack keys
+      // If user is typing in a field (e.g. another page in same webview), don't hijack keys
       if (isTypingTarget(e.target)) return;
 
       // Reset timer for scanner bursts
@@ -148,12 +200,17 @@ export default function ScanPage() {
         buffer = "";
         if (!code) return;
 
+        blurIfEditableFocused(); // ✅ helps stop keyboard after scan
         addByBarcode(code);
       }
     };
 
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
   }, []);
 
   function inc(barcodeValue) {
@@ -224,7 +281,14 @@ export default function ScanPage() {
         adminUrl: data.adminUrl,
       });
 
+      // Clear basket
       clearBasketInternal();
+
+      // ✅ Send back to Home after checkout (and lock /scan again)
+      try {
+        sessionStorage.removeItem(START_FLAG_KEY);
+      } catch {}
+      router.replace("/");
     } catch (e) {
       setError((e && e.message) || "Checkout failed");
     } finally {
@@ -272,13 +336,22 @@ export default function ScanPage() {
           justifyContent: "space-between",
           alignItems: "center",
           gap: 10,
+          maxWidth: "100%",
+          boxSizing: "border-box",
         }}
       >
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 900 }}>
             {loadingAdd ? "Adding item…" : "Scan items to add to basket"}
           </div>
-          <div style={{ fontSize: 13, color: "#777" }}>
+          <div
+            style={{
+              fontSize: 13,
+              color: "#777",
+              wordBreak: "break-word",
+              overflowWrap: "anywhere",
+            }}
+          >
             {barcode ? `Last scanned: ${barcode}` : "No scans yet"}
           </div>
         </div>
@@ -291,6 +364,7 @@ export default function ScanPage() {
             background: justScanned ? BRAND_PINK : "#fafafa",
             fontWeight: 900,
             whiteSpace: "nowrap",
+            flexShrink: 0,
           }}
         >
           {items.length} item{items.length === 1 ? "" : "s"}
@@ -349,10 +423,19 @@ export default function ScanPage() {
             padding: 12,
             marginBottom: 10,
             background: "#fff",
+            maxWidth: "100%",
+            boxSizing: "border-box",
           }}
         >
           <div style={{ fontWeight: 900, fontSize: 16 }}>{it.title}</div>
-          <div style={{ fontSize: 13, color: "#777" }}>
+          <div
+            style={{
+              fontSize: 13,
+              color: "#777",
+              wordBreak: "break-word",
+              overflowWrap: "anywhere",
+            }}
+          >
             Barcode: {it.barcode}
           </div>
           <div style={{ marginTop: 6, color: "#333" }}>
@@ -365,6 +448,7 @@ export default function ScanPage() {
               gap: 10,
               alignItems: "center",
               marginTop: 10,
+              flexWrap: "wrap",
             }}
           >
             <button
