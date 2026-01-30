@@ -1,0 +1,17 @@
+/* Global reset */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: #ffffff;
+  color: #111;
+}
+
+/* Make taps feel app-like on Android */
+button {
+  touch-action: manipulation;
+}
