@@ -21,9 +21,8 @@ export default function ScanPage() {
   const [loadingAdd, setLoadingAdd] = useState(false);
   const [loadingCheckout, setLoadingCheckout] = useState(false);
   const [error, setError] = useState("");
-  const [checkoutResult, setCheckoutResult] = useState(null); // { orderId, orderName, adminUrl }
+  const [checkoutResult, setCheckoutResult] = useState(null); // { code }
 
-  // used only as a visual indicator / last scan state (no input field)
   const lastScanAtRef = useRef(0);
 
   // ✅ Guard: don't allow /scan unless "Start shopping" was pressed
@@ -82,7 +81,6 @@ export default function ScanPage() {
   }, [items]);
 
   const vat = useMemo(() => {
-    // 2dp rounding
     return Math.round(subtotal * VAT_RATE * 100) / 100;
   }, [subtotal]);
 
@@ -92,7 +90,6 @@ export default function ScanPage() {
 
   async function addByBarcode(bc) {
     setError("");
-    setCheckoutResult(null);
 
     const code = (bc || "").trim();
     if (!code) return;
@@ -112,7 +109,6 @@ export default function ScanPage() {
 
       const product = data.product;
 
-      // If already in basket, increment qty
       setItems((prev) => {
         const idx = prev.findIndex((x) => x.barcode === product.barcode);
         if (idx >= 0) {
@@ -144,9 +140,6 @@ export default function ScanPage() {
    * ✅ GLOBAL SCANNER CAPTURE
    * No input field required.
    * Scanner types quickly + presses Enter => we capture it.
-   *
-   * Also: prevent the Android soft keyboard popping up by ensuring we never focus
-   * an input and by blurring any accidental focus.
    */
   useEffect(() => {
     let buffer = "";
@@ -155,8 +148,7 @@ export default function ScanPage() {
     const isTypingTarget = (el) => {
       if (!el) return false;
       const tag = (el.tagName || "").toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select")
-        return true;
+      if (tag === "input" || tag === "textarea" || tag === "select") return true;
       if (el.isContentEditable) return true;
       return false;
     };
@@ -168,39 +160,33 @@ export default function ScanPage() {
       } catch {}
     };
 
-    // On Zebra, the WebView can sometimes focus something and pop keyboard.
-    // We gently blur on first interaction and after scans.
     const onPointerDown = () => blurIfEditableFocused();
     window.addEventListener("pointerdown", onPointerDown, true);
 
     const onKeyDown = (e) => {
-      // Let shortcuts work
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // If we are showing the checkout code screen, ignore scanner keys
+      if (checkoutResult?.code) return;
 
-      // If user is typing in a field (e.g. another page in same webview), don't hijack keys
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
 
-      // Reset timer for scanner bursts
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         buffer = "";
       }, 90);
 
-      // Collect printable characters
       if (e.key && e.key.length === 1) {
         buffer += e.key;
         return;
       }
 
-      // Enter means scanner finished the barcode
       if (e.key === "Enter") {
         e.preventDefault();
-
         const code = buffer.trim();
         buffer = "";
         if (!code) return;
 
-        blurIfEditableFocused(); // ✅ helps stop keyboard after scan
+        blurIfEditableFocused();
         addByBarcode(code);
       }
     };
@@ -211,7 +197,7 @@ export default function ScanPage() {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("pointerdown", onPointerDown, true);
     };
-  }, []);
+  }, [checkoutResult]);
 
   function inc(barcodeValue) {
     setItems((prev) =>
@@ -237,16 +223,27 @@ export default function ScanPage() {
 
   function clearBasketInternal() {
     setItems([]);
-    setCheckoutResult(null);
     setError("");
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
   }
 
+  function endSessionBackToHome() {
+    // Clear the "started" flag so /scan is locked again
+    try {
+      sessionStorage.removeItem(START_FLAG_KEY);
+    } catch {}
+    router.replace("/");
+  }
+
+  /**
+   * ✅ NEW CHECKOUT BEHAVIOUR (STEP 2)
+   * Instead of creating a Shopify order, we create a basket code.
+   * POS will load this basket code and create the real POS order.
+   */
   async function checkout() {
     setError("");
-    setCheckoutResult(null);
 
     if (!items.length) {
       setError("Basket is empty");
@@ -255,12 +252,12 @@ export default function ScanPage() {
 
     setLoadingCheckout(true);
     try {
-      const res = await fetch("/api/orders/create-unpaid", {
+      const res = await fetch("/api/baskets/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           source: "scan-and-go",
-          deviceId: "BROWSER-TEST-01",
+          deviceId: "TC56-01",
           items: items.map((x) => ({
             barcode: x.barcode,
             quantity: x.qty,
@@ -270,25 +267,16 @@ export default function ScanPage() {
 
       const data = await res.json().catch(() => ({}));
 
-      if (!res.ok || !data?.ok) {
+      if (!res.ok || !data?.ok || !data?.code) {
         setError(data?.error || data?.message || "Checkout failed");
         return;
       }
 
-      setCheckoutResult({
-        orderId: data.orderId,
-        orderName: data.orderName,
-        adminUrl: data.adminUrl,
-      });
+      // Show code screen
+      setCheckoutResult({ code: data.code });
 
-      // Clear basket
+      // Clear basket after creating the code (so next customer starts clean)
       clearBasketInternal();
-
-      // ✅ Send back to Home after checkout (and lock /scan again)
-      try {
-        sessionStorage.removeItem(START_FLAG_KEY);
-      } catch {}
-      router.replace("/");
     } catch (e) {
       setError((e && e.message) || "Checkout failed");
     } finally {
@@ -298,6 +286,83 @@ export default function ScanPage() {
 
   const justScanned =
     barcode && Date.now() - (lastScanAtRef.current || 0) < 2500;
+
+  // ✅ If we have a checkout code, show ONLY the code screen (no scanning UI)
+  if (checkoutResult?.code) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 20,
+          fontFamily: "'League Spartan', system-ui, -apple-system",
+          background: "#f9f9f9",
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 520,
+            background: "#fff",
+            border: "1px solid #eee",
+            borderRadius: 18,
+            padding: 22,
+            textAlign: "center",
+          }}
+        >
+          <img
+            src="/Main%20Logo.png"
+            alt="Salon Brands Pro"
+            style={{ height: 54, width: "auto", maxWidth: "100%" }}
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+
+          <div style={{ marginTop: 14, color: "#666", fontSize: 14 }}>
+            Show this code to staff at the till
+          </div>
+
+          <div
+            style={{
+              marginTop: 16,
+              fontSize: 54,
+              fontWeight: 900,
+              letterSpacing: 2,
+            }}
+          >
+            {checkoutResult.code}
+          </div>
+
+          <div style={{ marginTop: 10, color: "#777", fontSize: 13 }}>
+            Staff will enter this into Shopify POS to load your basket.
+          </div>
+
+          <button
+            onClick={() => {
+              setCheckoutResult(null);
+              endSessionBackToHome();
+            }}
+            style={{
+              marginTop: 18,
+              width: "100%",
+              padding: 16,
+              fontSize: 18,
+              fontWeight: 900,
+              borderRadius: 14,
+              border: "1px solid #111",
+              background: BRAND_PINK,
+              cursor: "pointer",
+            }}
+          >
+            Done (back to home)
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -324,7 +389,7 @@ export default function ScanPage() {
         />
       </div>
 
-      {/* Minimal status bar (optional but helpful) */}
+      {/* Status bar */}
       <div
         style={{
           marginTop: 12,
@@ -382,31 +447,6 @@ export default function ScanPage() {
           }}
         >
           <strong>Error:</strong> {error}
-        </div>
-      ) : null}
-
-      {checkoutResult ? (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 12,
-            background: "#e9fff0",
-            border: "1px solid #9ee6b3",
-            borderRadius: 12,
-          }}
-        >
-          <strong>Order created!</strong>
-          <div style={{ marginTop: 6 }}>
-            Order:{" "}
-            <b>{checkoutResult.orderName || "(no order name returned yet)"}</b>
-          </div>
-          {checkoutResult.adminUrl ? (
-            <div style={{ marginTop: 6 }}>
-              <a href={checkoutResult.adminUrl} target="_blank" rel="noreferrer">
-                Open in Shopify Admin
-              </a>
-            </div>
-          ) : null}
         </div>
       ) : null}
 
@@ -513,35 +553,17 @@ export default function ScanPage() {
           fontSize: 16,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
           <span style={{ color: "#555" }}>Subtotal</span>
           <span style={{ fontWeight: 900 }}>£{money(subtotal)}</span>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
           <span style={{ color: "#555" }}>VAT (20%)</span>
           <span style={{ fontWeight: 900 }}>£{money(vat)}</span>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 18,
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18 }}>
           <span style={{ fontWeight: 1000 }}>Total (inc VAT)</span>
           <span style={{ fontWeight: 1000 }}>£{money(totalIncVat)}</span>
         </div>
@@ -595,7 +617,7 @@ export default function ScanPage() {
               whiteSpace: "nowrap",
             }}
           >
-            {loadingCheckout ? "Checking out…" : "Checkout"}
+            {loadingCheckout ? "Creating code…" : "Checkout"}
           </button>
         </div>
       </div>
