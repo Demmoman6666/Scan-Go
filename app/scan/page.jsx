@@ -36,6 +36,16 @@ export default function ScanPage() {
     } catch {}
   }, [items]);
 
+  // Auto-focus input on first render (nice for scanners / Zebra)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        barcodeInputRef.current?.focus();
+      } catch {}
+    }, 200);
+    return () => clearTimeout(t);
+  }, []);
+
   const subtotal = useMemo(() => {
     return items.reduce(
       (sum, it) => sum + Number(it.price || 0) * Number(it.qty || 0),
@@ -44,6 +54,7 @@ export default function ScanPage() {
   }, [items]);
 
   const vat = useMemo(() => {
+    // 2dp rounding
     return Math.round(subtotal * VAT_RATE * 100) / 100;
   }, [subtotal]);
 
@@ -93,7 +104,9 @@ export default function ScanPage() {
       });
 
       setBarcode("");
-      if (barcodeInputRef.current) barcodeInputRef.current.focus();
+      try {
+        barcodeInputRef.current?.focus();
+      } catch {}
     } catch (e) {
       setError((e && e.message) || "Failed to add item");
     } finally {
@@ -101,26 +114,51 @@ export default function ScanPage() {
     }
   }
 
-  // ✅ GLOBAL SCANNER CAPTURE (works even if input isn't focused)
+  /**
+   * ✅ GLOBAL SCANNER CAPTURE
+   * Works even if input isn't focused.
+   *
+   * Important rules:
+   * - Ignore when user is actively typing inside an input/textarea/contenteditable
+   * - Use a short buffer timeout
+   * - Only trigger add when scanner "ends" with Enter
+   */
   useEffect(() => {
     let buffer = "";
     let timer = null;
 
+    const isTypingTarget = (el) => {
+      if (!el) return false;
+      const tag = (el.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return true;
+      if (el.isContentEditable) return true;
+      return false;
+    };
+
     const onKeyDown = (e) => {
+      // Let shortcuts work
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
+      // If user is typing in a field, don't hijack keys
+      // (Zebra scanners usually "type" into the focused element anyway)
+      if (isTypingTarget(e.target)) return;
+
+      // Reset timer for scanner bursts
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         buffer = "";
-      }, 80);
+      }, 90);
 
+      // Collect printable characters
       if (e.key && e.key.length === 1) {
         buffer += e.key;
         return;
       }
 
+      // Enter means scanner finished the barcode
       if (e.key === "Enter") {
         e.preventDefault();
+
         const code = buffer.trim();
         buffer = "";
         if (!code) return;
@@ -202,6 +240,7 @@ export default function ScanPage() {
         adminUrl: data.adminUrl,
       });
 
+      // MVP behaviour: clear basket after successful checkout
       clearBasketInternal();
     } catch (e) {
       setError((e && e.message) || "Checkout failed");
@@ -217,12 +256,13 @@ export default function ScanPage() {
         margin: "0 auto",
         padding: 16,
         paddingBottom: 120, // space for sticky checkout bar
+        fontFamily: "'League Spartan', system-ui, -apple-system",
       }}
     >
       {/* Logo header */}
       <div style={{ display: "flex", justifyContent: "center", paddingTop: 10 }}>
         <img
-          src="/logo.png"
+          src="/Main Logo.png"
           alt="Salon Brands Pro"
           style={{ height: 44, width: "auto" }}
           onError={(e) => {
@@ -264,7 +304,10 @@ export default function ScanPage() {
             background: "#fff",
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") addByBarcode(barcode);
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addByBarcode(barcode);
+            }
           }}
         />
         <button
@@ -339,12 +382,21 @@ export default function ScanPage() {
           }}
         >
           <div style={{ fontWeight: 900, fontSize: 16 }}>{it.title}</div>
-          <div style={{ fontSize: 13, color: "#777" }}>Barcode: {it.barcode}</div>
+          <div style={{ fontSize: 13, color: "#777" }}>
+            Barcode: {it.barcode}
+          </div>
           <div style={{ marginTop: 6, color: "#333" }}>
             £{money(it.price)} each • Line: <b>£{money(it.price * it.qty)}</b>
           </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              marginTop: 10,
+            }}
+          >
             <button
               onClick={() => dec(it.barcode)}
               style={{
@@ -357,7 +409,14 @@ export default function ScanPage() {
             >
               −
             </button>
-            <div style={{ minWidth: 34, textAlign: "center", fontWeight: 900, fontSize: 18 }}>
+            <div
+              style={{
+                minWidth: 34,
+                textAlign: "center",
+                fontWeight: 900,
+                fontSize: 18,
+              }}
+            >
               {it.qty}
             </div>
             <button
@@ -400,17 +459,35 @@ export default function ScanPage() {
           fontSize: 16,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
+        >
           <span style={{ color: "#555" }}>Subtotal</span>
           <span style={{ fontWeight: 900 }}>£{money(subtotal)}</span>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
+        >
           <span style={{ color: "#555" }}>VAT (20%)</span>
           <span style={{ fontWeight: 900 }}>£{money(vat)}</span>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 18,
+          }}
+        >
           <span style={{ fontWeight: 1000 }}>Total (inc VAT)</span>
           <span style={{ fontWeight: 1000 }}>£{money(totalIncVat)}</span>
         </div>
@@ -428,7 +505,15 @@ export default function ScanPage() {
           padding: 12,
         }}
       >
-        <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", gap: 12, alignItems: "center" }}>
+        <div
+          style={{
+            maxWidth: 720,
+            margin: "0 auto",
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+          }}
+        >
           <div style={{ fontWeight: 900 }}>
             Total inc VAT: £{money(totalIncVat)}
           </div>
