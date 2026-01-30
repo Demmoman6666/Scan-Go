@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 const STORAGE_KEY = "scan_go_basket_v1";
 const VAT_RATE = 0.2;
+const BRAND_PINK = "#FEB3E4";
 
 function money(n) {
   const num = Number(n || 0);
@@ -122,10 +123,8 @@ export default function ScanPage() {
         e.preventDefault();
         const code = buffer.trim();
         buffer = "";
-
         if (!code) return;
 
-        // Show it in the input (nice for staff), and add immediately
         setBarcode(code);
         addByBarcode(code);
       }
@@ -203,7 +202,6 @@ export default function ScanPage() {
         adminUrl: data.adminUrl,
       });
 
-      // Clear basket after successful checkout
       clearBasketInternal();
     } catch (e) {
       setError((e && e.message) || "Checkout failed");
@@ -216,18 +214,40 @@ export default function ScanPage() {
     <div
       style={{
         maxWidth: 720,
-        margin: "16px auto",
+        margin: "0 auto",
         padding: 16,
-        fontFamily: "system-ui",
+        paddingBottom: 120, // space for sticky checkout bar
       }}
     >
-      <h1 style={{ margin: 0 }}>Salon Brands Pro — Scan & Go</h1>
-      <p style={{ marginTop: 8, color: "#555" }}>
-        Scan a barcode (or type it) → adds to a basket stored on this device.
+      {/* Logo header */}
+      <div style={{ display: "flex", justifyContent: "center", paddingTop: 10 }}>
+        <img
+          src="/logo.png"
+          alt="Salon Brands Pro"
+          style={{ height: 44, width: "auto" }}
+          onError={(e) => {
+            // If logo missing, fail gracefully
+            e.currentTarget.style.display = "none";
+          }}
+        />
+      </div>
+
+      <p style={{ marginTop: 10, color: "#555", textAlign: "center" }}>
+        Scan a barcode (or type it) to add items to the basket.
       </p>
 
       {/* Scan bar */}
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          marginTop: 12,
+          background: "#fafafa",
+          border: "1px solid #eee",
+          borderRadius: 14,
+          padding: 12,
+        }}
+      >
         <input
           ref={barcodeInputRef}
           id="barcodeInput"
@@ -236,10 +256,12 @@ export default function ScanPage() {
           placeholder="Ready to scan…"
           style={{
             flex: 1,
-            padding: 12,
+            padding: 14,
             fontSize: 18,
-            borderRadius: 10,
+            borderRadius: 12,
             border: "1px solid #ddd",
+            outline: "none",
+            background: "#fff",
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") addByBarcode(barcode);
@@ -249,44 +271,16 @@ export default function ScanPage() {
           onClick={() => addByBarcode(barcode)}
           disabled={loadingAdd}
           style={{
-            padding: "12px 16px",
+            padding: "14px 16px",
             fontSize: 18,
-            fontWeight: 700,
-            borderRadius: 10,
-            border: "1px solid #222",
+            fontWeight: 800,
+            borderRadius: 12,
+            border: "1px solid #111",
+            background: BRAND_PINK,
+            cursor: loadingAdd ? "not-allowed" : "pointer",
           }}
         >
           {loadingAdd ? "Adding…" : "Add"}
-        </button>
-      </div>
-
-      {/* Actions row */}
-      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-        <button
-          onClick={() => addByBarcode("8005610625973")}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid #ddd",
-          }}
-        >
-          Test add known barcode
-        </button>
-
-        <div style={{ flex: 1 }} />
-
-        <button
-          onClick={checkout}
-          disabled={loadingCheckout || items.length === 0}
-          style={{
-            padding: "12px 16px",
-            fontSize: 18,
-            fontWeight: 800,
-            borderRadius: 10,
-            border: "1px solid #111",
-          }}
-        >
-          {loadingCheckout ? "Checking out…" : `Checkout £${money(totalIncVat)}`}
         </button>
       </div>
 
@@ -297,7 +291,7 @@ export default function ScanPage() {
             padding: 12,
             background: "#ffe9e9",
             border: "1px solid #ffb3b3",
-            borderRadius: 10,
+            borderRadius: 12,
           }}
         >
           <strong>Error:</strong> {error}
@@ -311,7 +305,7 @@ export default function ScanPage() {
             padding: 12,
             background: "#e9fff0",
             border: "1px solid #9ee6b3",
-            borderRadius: 10,
+            borderRadius: 12,
           }}
         >
           <strong>Order created!</strong>
@@ -329,7 +323,7 @@ export default function ScanPage() {
         </div>
       ) : null}
 
-      <h2 style={{ marginTop: 18 }}>Basket</h2>
+      <h2 style={{ marginTop: 18, marginBottom: 10 }}>Basket</h2>
 
       {!items.length ? <p style={{ color: "#666" }}>Basket empty.</p> : null}
 
@@ -337,17 +331,16 @@ export default function ScanPage() {
         <div
           key={it.barcode}
           style={{
-            border: "1px solid #ddd",
-            borderRadius: 12,
+            border: "1px solid #eee",
+            borderRadius: 14,
             padding: 12,
             marginBottom: 10,
+            background: "#fff",
           }}
         >
-          <div style={{ fontWeight: 800, fontSize: 16 }}>{it.title}</div>
-          <div style={{ fontSize: 13, color: "#666" }}>
-            Barcode: {it.barcode}
-          </div>
-          <div style={{ marginTop: 6 }}>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>{it.title}</div>
+          <div style={{ fontSize: 13, color: "#777" }}>Barcode: {it.barcode}</div>
+          <div style={{ marginTop: 6, color: "#333" }}>
             £{money(it.price)} each • Line: <b>£{money(it.price * it.qty)}</b>
           </div>
 
@@ -355,31 +348,26 @@ export default function ScanPage() {
             <button
               onClick={() => dec(it.barcode)}
               style={{
-                padding: "10px 14px",
-                borderRadius: 10,
+                padding: "12px 16px",
+                borderRadius: 12,
                 border: "1px solid #ddd",
                 fontSize: 18,
+                background: "#fff",
               }}
             >
               −
             </button>
-            <div
-              style={{
-                minWidth: 34,
-                textAlign: "center",
-                fontWeight: 800,
-                fontSize: 18,
-              }}
-            >
+            <div style={{ minWidth: 34, textAlign: "center", fontWeight: 900, fontSize: 18 }}>
               {it.qty}
             </div>
             <button
               onClick={() => inc(it.barcode)}
               style={{
-                padding: "10px 14px",
-                borderRadius: 10,
+                padding: "12px 16px",
+                borderRadius: 12,
                 border: "1px solid #ddd",
                 fontSize: 18,
+                background: "#fff",
               }}
             >
               +
@@ -391,10 +379,10 @@ export default function ScanPage() {
               onClick={() => remove(it.barcode)}
               style={{
                 padding: "10px 12px",
-                borderRadius: 10,
-                background: "#ffe9e9",
-                border: "1px solid #ffb3b3",
-                fontWeight: 700,
+                borderRadius: 12,
+                background: "#fff",
+                border: "1px solid #ddd",
+                fontWeight: 800,
               }}
             >
               Remove
@@ -403,34 +391,68 @@ export default function ScanPage() {
         </div>
       ))}
 
-      {/* Totals section */}
+      {/* Totals */}
       <div
         style={{
           marginTop: 10,
           borderTop: "1px solid #eee",
           paddingTop: 12,
-          fontSize: 18,
+          fontSize: 16,
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ color: "#444" }}>Subtotal</span>
-          <span style={{ fontWeight: 800 }}>£{money(subtotal)}</span>
+          <span style={{ color: "#555" }}>Subtotal</span>
+          <span style={{ fontWeight: 900 }}>£{money(subtotal)}</span>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ color: "#444" }}>VAT (20%)</span>
-          <span style={{ fontWeight: 800 }}>£{money(vat)}</span>
+          <span style={{ color: "#555" }}>VAT (20%)</span>
+          <span style={{ fontWeight: 900 }}>£{money(vat)}</span>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 20 }}>
-          <span style={{ fontWeight: 900 }}>Total (inc VAT)</span>
-          <span style={{ fontWeight: 900 }}>£{money(totalIncVat)}</span>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18 }}>
+          <span style={{ fontWeight: 1000 }}>Total (inc VAT)</span>
+          <span style={{ fontWeight: 1000 }}>£{money(totalIncVat)}</span>
         </div>
       </div>
 
-      <p style={{ marginTop: 10, fontSize: 12, color: "#777" }}>
-        Tip: this basket is stored on this device only. Refreshing the page keeps it.
-      </p>
+      {/* Sticky Checkout Bar (bottom) */}
+      <div
+        style={{
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "#fff",
+          borderTop: "1px solid #eee",
+          padding: 12,
+        }}
+      >
+        <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ fontWeight: 900 }}>
+            Total inc VAT: £{money(totalIncVat)}
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          <button
+            onClick={checkout}
+            disabled={loadingCheckout || items.length === 0}
+            style={{
+              padding: "14px 18px",
+              fontSize: 18,
+              fontWeight: 900,
+              borderRadius: 12,
+              border: "1px solid #111",
+              background: BRAND_PINK,
+              width: 220,
+              cursor: loadingCheckout ? "not-allowed" : "pointer",
+            }}
+          >
+            {loadingCheckout ? "Checking out…" : "Checkout"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
