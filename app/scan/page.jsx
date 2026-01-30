@@ -36,15 +36,9 @@ export default function ScanPage() {
     } catch {}
   }, [items]);
 
-  // Auto-focus input on first render (nice for scanners / Zebra)
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try {
-        barcodeInputRef.current?.focus();
-      } catch {}
-    }, 200);
-    return () => clearTimeout(t);
-  }, []);
+  // ✅ IMPORTANT: Do NOT auto-focus on Zebra/Android or it pops the keyboard.
+  // Keeping this effect removed is the fix.
+  // (We rely on global scanner capture below instead.)
 
   const subtotal = useMemo(() => {
     return items.reduce(
@@ -104,9 +98,7 @@ export default function ScanPage() {
       });
 
       setBarcode("");
-      try {
-        barcodeInputRef.current?.focus();
-      } catch {}
+      // ✅ don't focus input (avoids keyboard)
     } catch (e) {
       setError((e && e.message) || "Failed to add item");
     } finally {
@@ -130,7 +122,8 @@ export default function ScanPage() {
     const isTypingTarget = (el) => {
       if (!el) return false;
       const tag = (el.tagName || "").toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select") return true;
+      if (tag === "input" || tag === "textarea" || tag === "select")
+        return true;
       if (el.isContentEditable) return true;
       return false;
     };
@@ -140,7 +133,6 @@ export default function ScanPage() {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       // If user is typing in a field, don't hijack keys
-      // (Zebra scanners usually "type" into the focused element anyway)
       if (isTypingTarget(e.target)) return;
 
       // Reset timer for scanner bursts
@@ -257,14 +249,17 @@ export default function ScanPage() {
         padding: 16,
         paddingBottom: 120, // space for sticky checkout bar
         fontFamily: "'League Spartan', system-ui, -apple-system",
+        width: "100%",
+        boxSizing: "border-box",
+        overflowX: "hidden", // ✅ prevents slight right-scroll
       }}
     >
       {/* Logo header */}
       <div style={{ display: "flex", justifyContent: "center", paddingTop: 10 }}>
         <img
-          src="/Main Logo.png"
+          src="/Main%20Logo.png"
           alt="Salon Brands Pro"
-          style={{ height: 44, width: "auto" }}
+          style={{ height: 44, width: "auto", maxWidth: "100%" }}
           onError={(e) => {
             // If logo missing, fail gracefully
             e.currentTarget.style.display = "none";
@@ -286,28 +281,34 @@ export default function ScanPage() {
           border: "1px solid #eee",
           borderRadius: 14,
           padding: 12,
+          width: "100%",
+          boxSizing: "border-box",
         }}
       >
         <input
           ref={barcodeInputRef}
           id="barcodeInput"
           value={barcode}
-          onChange={(e) => setBarcode(e.target.value)}
+          readOnly
+          inputMode="none"
+          tabIndex={-1}
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           placeholder="Ready to scan…"
           style={{
             flex: 1,
+            minWidth: 0, // ✅ prevents overflow in flex rows
             padding: 14,
             fontSize: 18,
             borderRadius: 12,
             border: "1px solid #ddd",
             outline: "none",
-            background: "#fff",
+            background: "#f9f9f9",
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              addByBarcode(barcode);
-            }
+          onFocus={(e) => {
+            // ✅ stops Android keyboard popping up on Zebra
+            e.currentTarget.blur();
           }}
         />
         <button
@@ -321,6 +322,7 @@ export default function ScanPage() {
             border: "1px solid #111",
             background: BRAND_PINK,
             cursor: loadingAdd ? "not-allowed" : "pointer",
+            whiteSpace: "nowrap",
           }}
         >
           {loadingAdd ? "Adding…" : "Add"}
@@ -503,6 +505,8 @@ export default function ScanPage() {
           background: "#fff",
           borderTop: "1px solid #eee",
           padding: 12,
+          width: "100vw",
+          boxSizing: "border-box",
         }}
       >
         <div
@@ -512,6 +516,9 @@ export default function ScanPage() {
             display: "flex",
             gap: 12,
             alignItems: "center",
+            paddingLeft: 16,
+            paddingRight: 16,
+            boxSizing: "border-box",
           }}
         >
           <div style={{ fontWeight: 900 }}>
@@ -531,7 +538,9 @@ export default function ScanPage() {
               border: "1px solid #111",
               background: BRAND_PINK,
               width: 220,
+              maxWidth: "50vw",
               cursor: loadingCheckout ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
             }}
           >
             {loadingCheckout ? "Checking out…" : "Checkout"}
